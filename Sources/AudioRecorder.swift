@@ -553,6 +553,10 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                 return existing
             }
             let new = AVAudioConverter(from: sourceFormat, to: targetFormat)
+            // Use the highest-quality sample-rate conversion so downsampling a
+            // 44.1/48 kHz mic to Whisper's 16 kHz does not introduce aliasing
+            // artifacts that degrade word recognition.
+            new?.sampleRateConverterQuality = .max
             existing = new
             return new
         }
@@ -764,6 +768,86 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
         }
     }
 
+    /// Loudness-normalizes a recorded PCM WAV toward a consistent target RMS,
+    /// with a peak ceiling that guarantees no clipping, and writes the result
+    /// to a new temporary WAV.
+    ///
+    /// Whisper's word recognition degrades noticeably on quiet or distant
+    /// speech. Leveling every recording to a predictable volume before upload
+    /// makes soft dictation far more legible to the model while leaving
+    /// already-loud recordings untouched.
+    ///
+    /// The operation is intentionally conservative and self-healing:
+    /// - Silent clips (RMS below ``silenceRMSFloor``) are skipped so we never
+    ///   amplify the noise floor.
+    /// - Recordings that are already at or above the target are skipped.
+    /// - Makeup gain is capped (``maxMakeupGain``) and further reduced if it
+    ///   would push the peak past ``peakCeiling``, so output never clips.
+    /// - Any failure returns `nil`.
+    ///
+    /// - Returns: A new temporary WAV URL the caller should upload (and delete
+    ///   afterward), or `nil` when normalization was skipped or failed — in
+    ///   which case the caller must upload the original file unchanged.
+    static func loudnessNormalizedWAV(at sourceURL: URL) -> URL? {
+        let targetRMS: Float = 0.125      // ~ -18 dBFS, a comfortable speech level
+        let peakCeiling: Float = 0.97     // ~ -0.26 dBFS, leaves headroom
+        let maxMakeupGain: Float = 11.0   // ~ +21 dB cap so we don't blow up noise
+        let silenceRMSFloor: Float = 0.0009
+
+        do {
+            let inputFile = try AVAudioFile(forReading: sourceURL)
+            let format = inputFile.processingFormat
+            let frameCount = AVAudioFrameCount(inputFile.length)
+            guard frameCount > 0,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+                return nil
+            }
+            try inputFile.read(into: buffer)
+
+            let frames = Int(buffer.frameLength)
+            let channelCount = Int(format.channelCount)
+            guard frames > 0, channelCount > 0, let channels = buffer.floatChannelData else {
+                return nil
+            }
+
+            // Measure loudness (RMS) and absolute peak across all channels.
+            var summedMeanSquare: Float = 0
+            var peak: Float = 0
+            for channel in 0..<channelCount {
+                var meanSquare: Float = 0
+                vDSP_measqv(channels[channel], 1, &meanSquare, vDSP_Length(frames))
+                summedMeanSquare += meanSquare
+                var channelPeak: Float = 0
+                vDSP_maxmgv(channels[channel], 1, &channelPeak, vDSP_Length(frames))
+                peak = max(peak, channelPeak)
+            }
+            let rms = sqrt(summedMeanSquare / Float(channelCount))
+            guard rms > silenceRMSFloor, peak > 0 else { return nil }
+
+            // Target the desired RMS, but never amplify beyond the cap and never
+            // let the loudest sample exceed the ceiling.
+            var gain = min(targetRMS / rms, maxMakeupGain)
+            if peak * gain > peakCeiling {
+                gain = peakCeiling / peak
+            }
+            guard gain > 1.01 else { return nil } // already loud enough
+
+            for channel in 0..<channelCount {
+                var scalar = gain
+                vDSP_vsmul(channels[channel], 1, &scalar, channels[channel], 1, vDSP_Length(frames))
+            }
+
+            let outputURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + ".wav")
+            let outputFile = try AVAudioFile(forWriting: outputURL, settings: inputFile.fileFormat.settings)
+            try outputFile.write(from: buffer)
+            return outputURL
+        } catch {
+            os_log(.info, log: recordingLog, "loudness normalization skipped: %{public}@", error.localizedDescription)
+            return nil
+        }
+    }
+
     private func updateAudioLevel(from inputBuffer: AVAudioPCMBuffer) -> Float {
         let rms = rmsLevel(for: inputBuffer)
         let normalizedDisplayLevel = liveLevelNormalizerLock.withLock {
@@ -858,6 +942,7 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                 return existing
             }
             let new = AVAudioConverter(from: sourceFormat, to: pcm16TargetFormat)
+            new?.sampleRateConverterQuality = .max
             existing = new
             return new
         }

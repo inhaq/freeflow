@@ -2735,15 +2735,23 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 return
             }
             self.transcriptionTask = Task {
+                // Loudness-normalize the recording before upload so quiet or
+                // distant speech reaches Whisper at a consistent level. Falls
+                // back to the original file if normalization is skipped/fails.
+                let uploadFileURL = AudioRecorder.loudnessNormalizedWAV(at: transcriptionFileURL)
+                    ?? transcriptionFileURL
                 defer {
                     activeRealtime?.cancel()
+                    if uploadFileURL != transcriptionFileURL {
+                        try? FileManager.default.removeItem(at: uploadFileURL)
+                    }
                 }
                 do {
                     let transcriptionService = try self.makeTranscriptionService()
                     async let transcript = Self.resolveRawTranscript(
                         realtimeService: activeRealtime,
                         fileService: transcriptionService,
-                        fileURL: transcriptionFileURL
+                        fileURL: uploadFileURL
                     )
                     let rawTranscript = try await transcript
                     let parsedTranscript = Self.parseTranscriptCommands(
