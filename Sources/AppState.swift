@@ -710,7 +710,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         for audioFileName in removedAudioFileNames {
             Self.deleteAudioFile(audioFileName)
         }
-        let savedHistory = pipelineHistoryStore.loadAllHistory()
+        // History (which can include several MB of base64 screenshot payloads)
+        // is loaded asynchronously after init to keep it off the launch
+        // critical path. See loadPipelineHistoryAsync() below.
 
         let selectedMicrophoneID = UserDefaults.standard.string(forKey: selectedMicrophoneStorageKey) ?? "default"
 
@@ -758,7 +760,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.alertSoundsEnabled = alertSoundsEnabled
         self.soundVolume = soundVolume
         self.voiceMacros = initialMacros
-        self.pipelineHistory = savedHistory
+        self.pipelineHistory = []
         self.hasAccessibility = initialAccessibility
         self.hasScreenRecordingPermission = initialScreenCapturePermission
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -800,6 +802,17 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
         // Clear any stale recording flag left over from an unclean exit.
         AppState.writeRecordingStateFlag(false)
+
+        loadPipelineHistoryAsync()
+    }
+
+    /// Loads persisted pipeline history off the main thread and publishes it
+    /// once available. Keeps the (potentially multi-MB) base64 screenshot
+    /// payloads from blocking app launch.
+    private func loadPipelineHistoryAsync() {
+        pipelineHistoryStore.loadAllHistoryAsync { [weak self] items in
+            self?.pipelineHistory = items
+        }
     }
 
     deinit {
@@ -1218,7 +1231,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     )
                     do {
                         try pipelineHistoryStore.update(updatedItem)
-                        pipelineHistory = pipelineHistoryStore.loadAllHistory()
+                        if let idx = pipelineHistory.firstIndex(where: { $0.id == updatedItem.id }) {
+                            pipelineHistory[idx] = updatedItem
+                        }
                         let trimmedRetryTranscript = finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !trimmedRetryTranscript.isEmpty {
                             lastTranscript = trimmedRetryTranscript
@@ -1257,7 +1272,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     )
                     do {
                         try pipelineHistoryStore.update(updatedItem)
-                        pipelineHistory = pipelineHistoryStore.loadAllHistory()
+                        if let idx = pipelineHistory.firstIndex(where: { $0.id == updatedItem.id }) {
+                            pipelineHistory[idx] = updatedItem
+                        }
                     } catch {}
                     retryingItemIDs.remove(item.id)
                 }
@@ -2836,7 +2853,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
             for audioFileName in removedAudioFileNames {
                 Self.deleteAudioFile(audioFileName)
             }
-            pipelineHistory = pipelineHistoryStore.loadAllHistory()
+            // Update the in-memory list in place rather than reloading the
+            // entire store (which would re-read every base64 screenshot blob
+            // from disk on each dictation). Newest entries sort to the front.
+            pipelineHistory.insert(newEntry, at: 0)
+            if pipelineHistory.count > maxPipelineHistoryCount {
+                pipelineHistory.removeLast(pipelineHistory.count - maxPipelineHistoryCount)
+            }
         } catch {
             errorMessage = "Unable to save run history entry: \(error.localizedDescription)"
         }

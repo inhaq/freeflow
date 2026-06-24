@@ -653,9 +653,27 @@ Selected text: \(selectedText ?? "None")
     }
 
     private func croppedWhitespaceImage(from image: CGImage) -> CGImage? {
-        let width = image.width
-        let height = image.height
-        guard width > 0, height > 0 else { return nil }
+        let originalWidth = image.width
+        let originalHeight = image.height
+        guard originalWidth > 0, originalHeight > 0 else { return nil }
+
+        // Scanning a full-resolution screenshot pixel-by-pixel is extremely
+        // expensive on Retina displays (millions of pixels and a full RGBA
+        // buffer the size of the screen). Find the content bounding box on a
+        // downscaled copy, then map the box back and crop the original image so
+        // the final encoded screenshot keeps full quality.
+        let maxScanDimension = 640
+        let scanImage: CGImage
+        if originalWidth > maxScanDimension || originalHeight > maxScanDimension,
+           let downscaled = resizedImage(for: image, maxDimension: CGFloat(maxScanDimension)) {
+            scanImage = downscaled
+        } else {
+            scanImage = image
+        }
+
+        let width = scanImage.width
+        let height = scanImage.height
+        guard width > 0, height > 0 else { return image }
 
         let bytesPerPixel = 4
         let bytesPerRow = width * bytesPerPixel
@@ -676,7 +694,7 @@ Selected text: \(selectedText ?? "None")
         }
 
         let drawRect = CGRect(origin: .zero, size: CGSize(width: width, height: height))
-        context.draw(image, in: drawRect)
+        context.draw(scanImage, in: drawRect)
 
         let whiteThreshold: UInt8 = 245
         let alphaThreshold: UInt8 = 5
@@ -710,12 +728,18 @@ Selected text: \(selectedText ?? "None")
 
         guard hasContent else { return image }
 
+        // Map the bounding box from scan space back to the original image's
+        // coordinate space and crop the full-resolution image.
+        let scaleX = CGFloat(originalWidth) / CGFloat(width)
+        let scaleY = CGFloat(originalHeight) / CGFloat(height)
         let cropRect = CGRect(
-            x: CGFloat(minX),
-            y: CGFloat(minY),
-            width: CGFloat(maxX - minX + 1),
-            height: CGFloat(maxY - minY + 1)
-        )
+            x: floor(CGFloat(minX) * scaleX),
+            y: floor(CGFloat(minY) * scaleY),
+            width: ceil(CGFloat(maxX - minX + 1) * scaleX),
+            height: ceil(CGFloat(maxY - minY + 1) * scaleY)
+        ).intersection(CGRect(x: 0, y: 0, width: originalWidth, height: originalHeight))
+
+        guard !cropRect.isNull, cropRect.width > 0, cropRect.height > 0 else { return image }
 
         return image.cropping(to: cropRect) ?? image
     }
