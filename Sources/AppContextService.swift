@@ -35,7 +35,11 @@ If details are missing, state uncertainty instead of inventing facts.
 Return only two sentences, no labels, no markdown, no extra commentary.
 """
     static let defaultContextPromptDate = "2026-02-24"
-    static let defaultScreenshotMaxDimension: CGFloat = 1024
+    // Default screenshot size sent to the vision context model. Image tokens
+    // scale with pixel area, so 768px sends ~44% fewer pixels than 1024px while
+    // staying large enough for the model to identify the app/activity and read
+    // on-screen names. Users can raise it again in Settings.
+    static let defaultScreenshotMaxDimension: CGFloat = 768
 
     private let apiKey: String
     private let baseURL: String

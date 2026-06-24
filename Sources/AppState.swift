@@ -767,7 +767,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.selectedMicrophoneID = selectedMicrophoneID
         self.precomputeMacros()
 
-        refreshAvailableMicrophones()
+        refreshAvailableMicrophonesAsync()
         installAudioDeviceObservers()
 
         if shortcuts.didUpdateHoldStoredValue {
@@ -1412,6 +1412,28 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
         needsMicrophoneRefreshAfterRecording = false
         availableMicrophones = AudioDevice.availableInputDevices()
+    }
+
+    /// Discovers input devices off the main thread and publishes the result on
+    /// the main queue. `AVCaptureDevice.DiscoverySession` can take tens to
+    /// hundreds of milliseconds, so running it synchronously (e.g. during
+    /// `init`) needlessly slows app launch. The microphone list is only needed
+    /// by the Settings UI — recording uses `selectedMicrophoneID` directly — so
+    /// it's safe to populate asynchronously.
+    func refreshAvailableMicrophonesAsync() {
+        guard !isRecording, !audioRecorder.isRecording else {
+            needsMicrophoneRefreshAfterRecording = true
+            return
+        }
+
+        needsMicrophoneRefreshAfterRecording = false
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let devices = AudioDevice.availableInputDevices()
+            DispatchQueue.main.async {
+                guard let self, !self.isRecording, !self.audioRecorder.isRecording else { return }
+                self.availableMicrophones = devices
+            }
+        }
     }
 
     private func refreshAvailableMicrophonesIfNeeded() {
