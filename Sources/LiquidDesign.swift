@@ -7,13 +7,17 @@ import SwiftUI
 // run on the app's macOS 13 deployment target and automatically adapt to light
 // and dark appearance.
 //
-// NOTE ON APPLE LIQUID GLASS (macOS 26+):
-// Apple's true Liquid Glass APIs (`.glassEffect(_:in:)`, `GlassEffectContainer`)
-// require the macOS 26 SDK to compile and macOS 26 at runtime. To adopt them
-// once the project is built with Xcode 26, change ONLY the `liquidSurface`
-// modifier below to branch on `if #available(macOS 26.0, *)` and apply
-// `.glassEffect(.regular, in: shape)` there — every card/surface in the app
-// picks it up automatically because they all funnel through this one modifier.
+// APPLE LIQUID GLASS (macOS 26+):
+// `liquidSurface` and the prominent button style use Apple's true Liquid Glass
+// (`.glassEffect`) when running on macOS 26+, and fall back to system materials
+// on macOS 13–25. Everything funnels through these modifiers, so the whole app
+// adopts Liquid Glass automatically. Building requires the macOS 26 SDK
+// (Xcode 26+); the `if #available(macOS 26.0, *)` gate keeps the binary running
+// on the macOS 13 deployment target.
+//
+// Possible future enhancement: wrap each tab's stack of cards in a
+// `GlassEffectContainer` so adjacent glass surfaces blend/morph and share a
+// single render pass.
 
 /// A translucent rounded surface (card/panel) with a hairline highlight and a
 /// soft shadow — the building block for the modernized UI.
@@ -24,25 +28,32 @@ struct LiquidSurfaceModifier: ViewModifier {
     var shadowRadius: CGFloat = 8
     var shadowY: CGFloat = 4
 
+    @ViewBuilder
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return content
-            .background(shape.fill(material))
-            .overlay(
-                shape.strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.18 * strokeOpacity),
-                            Color.white.opacity(0.04 * strokeOpacity)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    lineWidth: 1
+        if #available(macOS 26.0, *) {
+            // True Apple Liquid Glass. It supplies its own depth/shadow and
+            // clips to the shape, so no extra material/stroke/shadow is added.
+            content.glassEffect(.regular, in: shape)
+        } else {
+            content
+                .background(shape.fill(material))
+                .overlay(
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.18 * strokeOpacity),
+                                Color.white.opacity(0.04 * strokeOpacity)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
                 )
-            )
-            .clipShape(shape)
-            .shadow(color: Color.black.opacity(0.12), radius: shadowRadius, x: 0, y: shadowY)
+                .clipShape(shape)
+                .shadow(color: Color.black.opacity(0.12), radius: shadowRadius, x: 0, y: shadowY)
+        }
     }
 }
 
@@ -108,22 +119,36 @@ struct LiquidProminentButtonStyle: ButtonStyle {
         @Environment(\.isEnabled) private var isEnabled
 
         var body: some View {
-            configuration.label
-                .font(.body.weight(.semibold))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(tint.opacity(configuration.isPressed ? 0.8 : 1.0))
-                )
-                .foregroundStyle(.white)
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
-                )
-                .opacity(isEnabled ? 1.0 : 0.45)
-                .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            if #available(macOS 26.0, *) {
+                // Native Liquid Glass, tinted + interactive (fluid press).
+                configuration.label
+                    .font(.body.weight(.semibold))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 9)
+                    .foregroundStyle(.white)
+                    .glassEffect(
+                        .regular.tint(tint).interactive(),
+                        in: Capsule(style: .continuous)
+                    )
+                    .opacity(isEnabled ? 1.0 : 0.45)
+            } else {
+                configuration.label
+                    .font(.body.weight(.semibold))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(tint.opacity(configuration.isPressed ? 0.8 : 1.0))
+                    )
+                    .foregroundStyle(.white)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                    )
+                    .opacity(isEnabled ? 1.0 : 0.45)
+                    .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+                    .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            }
         }
     }
 }
