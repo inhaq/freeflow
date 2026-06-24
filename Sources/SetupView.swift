@@ -744,7 +744,6 @@ struct SetupView: View {
                     .font(.headline)
 
                 ScrollForwardingTextEditor(text: $customVocabularyInput)
-                    .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 130)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)

@@ -12,6 +12,8 @@ import AppKit
 /// never block the page.
 struct ScrollForwardingTextEditor: NSViewRepresentable {
     @Binding var text: String
+    /// Font for the editor. SwiftUI's `.font(...)` modifier does not reach an
+    /// `NSViewRepresentable`, so set the font here instead of via `.font()`.
     var font: NSFont = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }

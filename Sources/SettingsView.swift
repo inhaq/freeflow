@@ -1314,7 +1314,6 @@ struct GeneralSettingsView: View {
                 .foregroundStyle(.secondary)
 
             ScrollForwardingTextEditor(text: $customVocabularyInput)
-                .font(.system(.body, design: .monospaced))
                 .frame(minHeight: 80, maxHeight: 140)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
@@ -1529,7 +1528,6 @@ struct PromptsSettingsView: View {
             }
 
             ScrollForwardingTextEditor(text: $customSystemPromptInput)
-                .font(.system(.body, design: .monospaced))
                 .frame(minHeight: 120, maxHeight: 200)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
@@ -1584,7 +1582,6 @@ struct PromptsSettingsView: View {
                     .foregroundStyle(.secondary)
 
                 ScrollForwardingTextEditor(text: $systemTestInput)
-                    .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 60, maxHeight: 100)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
@@ -1771,7 +1768,6 @@ struct PromptsSettingsView: View {
             }
 
             ScrollForwardingTextEditor(text: $customContextPromptInput)
-                .font(.system(.body, design: .monospaced))
                 .frame(minHeight: 120, maxHeight: 200)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
@@ -2713,7 +2709,6 @@ struct VoiceMacroEditorView: View {
                     .font(.caption.weight(.semibold))
                     .padding(.top, 8)
                 ScrollForwardingTextEditor(text: $payload)
-                    .font(.system(.body, design: .monospaced))
                     .frame(height: 150)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
             }
