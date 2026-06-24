@@ -177,6 +177,22 @@ struct ProviderSettingsFields: View {
                 }
             )
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Post-Processing Reasoning")
+                    .font(.caption.weight(.semibold))
+                Text("Controls how much the cleanup model \"thinks\" before answering. Set to Off to disable reasoning entirely on models that support it (e.g. Groq Qwen3 / gpt-oss) — faster and fewer tokens. Automatic leaves each model's default untouched.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("", selection: $appState.postProcessingReasoningEffort) {
+                    ForEach(AppState.postProcessingReasoningEffortOptions, id: \.value) { option in
+                        Text(option.label).tag(option.value)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(maxWidth: 360, alignment: .leading)
+            }
+
             ModelDropdownView(
                 title: "Context Model",
                 subtitle: "Used for context inference, with a text-only retry when screenshot analysis fails.",
@@ -1973,7 +1989,7 @@ struct RunLogView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 ScrollView {
-                    VStack(spacing: 12) {
+                    LazyVStack(spacing: 12) {
                         ForEach(appState.pipelineHistory) { item in
                             RunLogEntryView(item: item)
                         }
@@ -2176,13 +2192,20 @@ struct RunLogEntryView: View {
                             title: "Capture Context",
                             content: {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    if let dataURL = item.contextScreenshotDataURL,
-                                       let image = imageFromDataURL(dataURL) {
-                                        Image(nsImage: image)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(maxHeight: 120)
-                                            .cornerRadius(4)
+                                    if let dataURL = item.contextScreenshotDataURL {
+                                        DataURLImageView(dataURL: dataURL) { image in
+                                            Image(nsImage: image)
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(maxHeight: 120)
+                                                .cornerRadius(4)
+                                        } placeholder: {
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .fill(Color(nsColor: .controlBackgroundColor))
+                                                .frame(height: 120)
+                                                .frame(maxWidth: .infinity)
+                                                .overlay(ProgressView().controlSize(.small))
+                                        }
                                     }
 
                                     if let prompt = item.contextPrompt, !prompt.isEmpty {

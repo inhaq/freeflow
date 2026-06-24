@@ -205,6 +205,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let transcriptionAPIKeyStorageKey = "transcription_api_key"
     private let postProcessingModelStorageKey = "post_processing_model"
     private let postProcessingFallbackModelStorageKey = "post_processing_fallback_model"
+    private let postProcessingReasoningEffortStorageKey = "post_processing_reasoning_effort"
     private let contextModelStorageKey = "context_model"
     private let holdShortcutStorageKey = "hold_shortcut"
     private let toggleShortcutStorageKey = "toggle_shortcut"
@@ -277,6 +278,27 @@ final class AppState: ObservableObject, @unchecked Sendable {
     static let defaultPostProcessingModel = "openai/gpt-oss-20b"
     static let defaultPostProcessingFallbackModel = "meta-llama/llama-4-scout-17b-16e-instruct"
     static let defaultContextModel = "meta-llama/llama-4-scout-17b-16e-instruct"
+    static let defaultPostProcessingReasoningEffort = "auto"
+    // User-selectable reasoning depth for post-processing. "auto" leaves the
+    // request untouched (per-model defaults apply); the others send
+    // `reasoning_effort`. "none" disables thinking entirely on providers that
+    // support it (e.g. Groq Qwen3 / gpt-oss), which is faster and uses fewer
+    // tokens. Graded levels (low/medium/high) are honored by models that
+    // support them (e.g. gpt-oss); models that only toggle reasoning treat any
+    // non-"none" value as on.
+    static let postProcessingReasoningEffortOptions: [(value: String, label: String)] = [
+        ("auto", "Automatic (model default)"),
+        ("none", "Off — no reasoning (fastest, fewest tokens)"),
+        ("low", "Low"),
+        ("medium", "Medium"),
+        ("high", "High")
+    ]
+
+    static func normalizedPostProcessingReasoningEffort(_ value: String) -> String {
+        postProcessingReasoningEffortOptions.contains { $0.value == value }
+            ? value
+            : defaultPostProcessingReasoningEffort
+    }
     private static let trailingPressEnterCommandPattern = try! NSRegularExpression(
         pattern: #"(?i)(?:^|[ \t\r\n,;:\-]+)press[ \t\r\n]+enter[\s\p{P}]*$"#
     )
@@ -329,6 +351,24 @@ final class AppState: ObservableObject, @unchecked Sendable {
         didSet {
             UserDefaults.standard.set(postProcessingFallbackModel, forKey: postProcessingFallbackModelStorageKey)
         }
+    }
+
+    @Published var postProcessingReasoningEffort: String {
+        didSet {
+            let normalized = Self.normalizedPostProcessingReasoningEffort(postProcessingReasoningEffort)
+            if normalized != postProcessingReasoningEffort {
+                postProcessingReasoningEffort = normalized
+                return
+            }
+            UserDefaults.standard.set(postProcessingReasoningEffort, forKey: postProcessingReasoningEffortStorageKey)
+        }
+    }
+
+    /// The `reasoning_effort` value to send for post-processing, or `nil` when
+    /// the user left it on "Automatic" (so per-model defaults apply and no
+    /// override is sent — keeps custom/non-Groq providers working).
+    var postProcessingReasoningEffortOverride: String? {
+        postProcessingReasoningEffort == "auto" ? nil : postProcessingReasoningEffort
     }
 
     @Published var contextModel: String {
@@ -627,6 +667,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let transcriptionAPIKey = Self.loadStoredAPIKey(account: transcriptionAPIKeyStorageKey)
         let postProcessingModel = UserDefaults.standard.string(forKey: postProcessingModelStorageKey) ?? Self.defaultPostProcessingModel
         let postProcessingFallbackModel = UserDefaults.standard.string(forKey: postProcessingFallbackModelStorageKey) ?? Self.defaultPostProcessingFallbackModel
+        let postProcessingReasoningEffort = Self.normalizedPostProcessingReasoningEffort(
+            UserDefaults.standard.string(forKey: postProcessingReasoningEffortStorageKey) ?? Self.defaultPostProcessingReasoningEffort
+        )
         let contextModel = UserDefaults.standard.string(forKey: contextModelStorageKey) ?? Self.defaultContextModel
         let shortcuts = Self.loadShortcutConfiguration(
             holdKey: holdShortcutStorageKey,
@@ -731,6 +774,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.transcriptionModel = transcriptionModel
         self.postProcessingModel = postProcessingModel
         self.postProcessingFallbackModel = postProcessingFallbackModel
+        self.postProcessingReasoningEffort = postProcessingReasoningEffort
         self.contextModel = contextModel
         self.holdShortcut = shortcuts.hold
         self.toggleShortcut = shortcuts.toggle
@@ -1167,7 +1211,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             baseURL: apiBaseURL,
             preferredModel: postProcessingModel,
             preferredFallbackModel: postProcessingFallbackModel,
-            instructionExecutionGuardEnabled: instructionExecutionGuardEnabled
+            instructionExecutionGuardEnabled: instructionExecutionGuardEnabled,
+            reasoningEffortOverride: postProcessingReasoningEffortOverride
         )
         let capturedCustomVocabulary = customVocabulary
         let capturedCustomSystemPrompt = customSystemPrompt
@@ -2627,7 +2672,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             baseURL: apiBaseURL,
             preferredModel: postProcessingModel,
             preferredFallbackModel: postProcessingFallbackModel,
-            instructionExecutionGuardEnabled: instructionExecutionGuardEnabled
+            instructionExecutionGuardEnabled: instructionExecutionGuardEnabled,
+            reasoningEffortOverride: postProcessingReasoningEffortOverride
         )
 
             let activeRealtime = self.realtimeService

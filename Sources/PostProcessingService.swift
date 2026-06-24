@@ -89,6 +89,7 @@ Behavior:
     private let preferredModel: String
     private let preferredFallbackModel: String
     private let instructionExecutionGuardEnabled: Bool
+    private let reasoningEffortOverride: String?
     private let defaultModel = "openai/gpt-oss-20b"
     private let defaultFallbackModel = "meta-llama/llama-4-scout-17b-16e-instruct"
     private let defaultModelReasoningEffort = "low"
@@ -103,13 +104,16 @@ Behavior:
         baseURL: String = "https://api.groq.com/openai/v1",
         preferredModel: String = "",
         preferredFallbackModel: String = "",
-        instructionExecutionGuardEnabled: Bool = true
+        instructionExecutionGuardEnabled: Bool = true,
+        reasoningEffortOverride: String? = nil
     ) {
         self.apiKey = apiKey
         self.baseURL = baseURL
         self.preferredModel = preferredModel.trimmingCharacters(in: .whitespacesAndNewlines)
         self.preferredFallbackModel = preferredFallbackModel.trimmingCharacters(in: .whitespacesAndNewlines)
         self.instructionExecutionGuardEnabled = instructionExecutionGuardEnabled
+        let trimmedReasoning = reasoningEffortOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.reasoningEffortOverride = (trimmedReasoning?.isEmpty == false) ? trimmedReasoning : nil
     }
 
     func postProcess(
@@ -403,7 +407,9 @@ Model: \(model)
         } else if model == defaultModel {
             payload["max_completion_tokens"] = postProcessingMaxCompletionTokens
         }
-        if let effort = config.reasoningEffort {
+        if let override = reasoningEffortOverride {
+            payload["reasoning_effort"] = override
+        } else if let effort = config.reasoningEffort {
             payload["reasoning_effort"] = effort
         } else if model == defaultModel {
             payload["reasoning_effort"] = defaultModelReasoningEffort
@@ -536,7 +542,9 @@ Model: \(model)
         } else if model == defaultModel {
             payload["max_completion_tokens"] = postProcessingMaxCompletionTokens
         }
-        if let effort = config.reasoningEffort {
+        if let override = reasoningEffortOverride {
+            payload["reasoning_effort"] = override
+        } else if let effort = config.reasoningEffort {
             payload["reasoning_effort"] = effort
         } else if model == defaultModel {
             payload["reasoning_effort"] = defaultModelReasoningEffort
