@@ -778,13 +778,16 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
     ///    effective SNR of quiet/soft speech and improves word recognition.
     /// 2. Loudness normalization toward a consistent target RMS, with a peak
     ///    ceiling and a capped makeup gain, so faint dictation reaches the model
-    ///    at a predictable level. It never attenuates and never clips.
+    ///    at a predictable level. It never attenuates.
     ///
     /// The operation is intentionally conservative and self-healing:
     /// - Silent clips (RMS below ``silenceRMSFloor``) are skipped so we never
     ///   amplify the noise floor.
-    /// - Makeup gain is capped (``maxMakeupGain``) and reduced if it would push
-    ///   the peak past ``peakCeiling``; output is hard-clipped to [-1, 1].
+    /// - Makeup gain is capped (``maxMakeupGain``) and limited so the peak can
+    ///   never exceed ``peakCeiling``. If the high-passed signal already
+    ///   overshoots the ceiling, enhancement is abandoned (returns `nil`) so the
+    ///   caller uploads the original rather than a clipped version. A final
+    ///   hard clip to [-1, 1] only guards the float-to-Int16 write.
     /// - Any failure returns `nil`.
     ///
     /// - Returns: A new temporary WAV URL the caller should upload (and delete
