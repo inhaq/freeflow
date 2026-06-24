@@ -768,31 +768,34 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
         }
     }
 
-    /// Loudness-normalizes a recorded PCM WAV toward a consistent target RMS,
-    /// with a peak ceiling that guarantees no clipping, and writes the result
-    /// to a new temporary WAV.
+    /// Enhances a recorded PCM WAV for speech recognition and writes the result
+    /// to a new temporary WAV. Two stages are applied:
     ///
-    /// Whisper's word recognition degrades noticeably on quiet or distant
-    /// speech. Leveling every recording to a predictable volume before upload
-    /// makes soft dictation far more legible to the model while leaving
-    /// already-loud recordings untouched.
+    /// 1. An 80 Hz first-order high-pass filter that removes DC offset and
+    ///    sub-speech rumble (HVAC, mic handling, desk thumps). Whisper's mel
+    ///    front-end is robust to absolute loudness but sensitive to SNR, so
+    ///    stripping low-frequency energy outside the speech band raises the
+    ///    effective SNR of quiet/soft speech and improves word recognition.
+    /// 2. Loudness normalization toward a consistent target RMS, with a peak
+    ///    ceiling and a capped makeup gain, so faint dictation reaches the model
+    ///    at a predictable level. It never attenuates and never clips.
     ///
     /// The operation is intentionally conservative and self-healing:
     /// - Silent clips (RMS below ``silenceRMSFloor``) are skipped so we never
     ///   amplify the noise floor.
-    /// - Recordings that are already at or above the target are skipped.
-    /// - Makeup gain is capped (``maxMakeupGain``) and further reduced if it
-    ///   would push the peak past ``peakCeiling``, so output never clips.
+    /// - Makeup gain is capped (``maxMakeupGain``) and reduced if it would push
+    ///   the peak past ``peakCeiling``; output is hard-clipped to [-1, 1].
     /// - Any failure returns `nil`.
     ///
     /// - Returns: A new temporary WAV URL the caller should upload (and delete
-    ///   afterward), or `nil` when normalization was skipped or failed — in
-    ///   which case the caller must upload the original file unchanged.
-    static func loudnessNormalizedWAV(at sourceURL: URL) -> URL? {
+    ///   afterward), or `nil` when enhancement was skipped or failed — in which
+    ///   case the caller must upload the original file unchanged.
+    static func enhancedWAV(at sourceURL: URL) -> URL? {
         let targetRMS: Float = 0.125      // ~ -18 dBFS, a comfortable speech level
         let peakCeiling: Float = 0.97     // ~ -0.26 dBFS, leaves headroom
         let maxMakeupGain: Float = 11.0   // ~ +21 dB cap so we don't blow up noise
         let silenceRMSFloor: Float = 0.0009
+        let highPassCutoffHz: Float = 80  // below the speech fundamental range
 
         do {
             let inputFile = try AVAudioFile(forReading: sourceURL)
@@ -810,7 +813,37 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                 return nil
             }
 
-            // Measure loudness (RMS) and absolute peak across all channels.
+            // Skip pure silence so we never high-pass/amplify the noise floor.
+            var preSummedMeanSquare: Float = 0
+            for channel in 0..<channelCount {
+                var meanSquare: Float = 0
+                vDSP_measqv(channels[channel], 1, &meanSquare, vDSP_Length(frames))
+                preSummedMeanSquare += meanSquare
+            }
+            guard sqrt(preSummedMeanSquare / Float(channelCount)) > silenceRMSFloor else {
+                return nil
+            }
+
+            // --- Stage 1: first-order high-pass (in place, per channel) ---
+            // y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+            let sampleRate = Float(format.sampleRate)
+            let rc = 1 / (2 * Float.pi * highPassCutoffHz)
+            let dt = 1 / sampleRate
+            let alpha = rc / (rc + dt)
+            for channel in 0..<channelCount {
+                let samples = channels[channel]
+                var previousInput = samples[0]
+                var previousOutput: Float = 0
+                for index in 0..<frames {
+                    let input = samples[index]
+                    let output = alpha * (previousOutput + input - previousInput)
+                    samples[index] = output
+                    previousInput = input
+                    previousOutput = output
+                }
+            }
+
+            // --- Stage 2: measure post-filter loudness/peak, apply safe gain ---
             var summedMeanSquare: Float = 0
             var peak: Float = 0
             for channel in 0..<channelCount {
@@ -822,19 +855,28 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                 peak = max(peak, channelPeak)
             }
             let rms = sqrt(summedMeanSquare / Float(channelCount))
-            guard rms > silenceRMSFloor, peak > 0 else { return nil }
+            guard rms > 0, peak > 0 else { return nil }
 
-            // Target the desired RMS, but never amplify beyond the cap and never
-            // let the loudest sample exceed the ceiling.
+            // Target the desired RMS, but never amplify beyond the cap, never
+            // let the loudest sample exceed the ceiling, and never attenuate.
             var gain = min(targetRMS / rms, maxMakeupGain)
             if peak * gain > peakCeiling {
                 gain = peakCeiling / peak
             }
-            guard gain > 1.01 else { return nil } // already loud enough
+            gain = max(gain, 1)
 
+            if gain != 1 {
+                for channel in 0..<channelCount {
+                    var scalar = gain
+                    vDSP_vsmul(channels[channel], 1, &scalar, channels[channel], 1, vDSP_Length(frames))
+                }
+            }
+
+            // Hard safety clip so the float -> Int16 file write can never wrap.
+            var low: Float = -1
+            var high: Float = 1
             for channel in 0..<channelCount {
-                var scalar = gain
-                vDSP_vsmul(channels[channel], 1, &scalar, channels[channel], 1, vDSP_Length(frames))
+                vDSP_vclip(channels[channel], 1, &low, &high, channels[channel], 1, vDSP_Length(frames))
             }
 
             let outputURL = FileManager.default.temporaryDirectory
@@ -843,7 +885,7 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
             try outputFile.write(from: buffer)
             return outputURL
         } catch {
-            os_log(.info, log: recordingLog, "loudness normalization skipped: %{public}@", error.localizedDescription)
+            os_log(.info, log: recordingLog, "audio enhancement skipped: %{public}@", error.localizedDescription)
             return nil
         }
     }

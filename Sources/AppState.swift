@@ -2735,10 +2735,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 return
             }
             self.transcriptionTask = Task {
-                // Loudness-normalize the recording before upload so quiet or
-                // distant speech reaches Whisper at a consistent level. Falls
-                // back to the original file if normalization is skipped/fails.
-                let uploadFileURL = AudioRecorder.loudnessNormalizedWAV(at: transcriptionFileURL)
+                // Enhance the recording before upload (high-pass to lift SNR of
+                // quiet speech, then loudness-normalize) so faint dictation
+                // reaches Whisper clearly. Falls back to the original file if
+                // enhancement is skipped or fails.
+                let uploadFileURL = AudioRecorder.enhancedWAV(at: transcriptionFileURL)
                     ?? transcriptionFileURL
                 defer {
                     activeRealtime?.cancel()
