@@ -380,18 +380,20 @@ struct SettingsView: View {
 
             Divider()
 
-            Group {
-                switch appState.selectedSettingsTab {
-                case .general, .none:
-                    GeneralSettingsView()
-                case .prompts:
-                    PromptsSettingsView()
-                case .macros:
-                    VoiceMacrosSettingsView()
-                case .runLog:
-                    RunLogView()
-                case .debug:
-                    DebugSettingsView()
+            LiquidGlassGroup {
+                Group {
+                    switch appState.selectedSettingsTab {
+                    case .general, .none:
+                        GeneralSettingsView()
+                    case .prompts:
+                        PromptsSettingsView()
+                    case .macros:
+                        VoiceMacrosSettingsView()
+                    case .runLog:
+                        RunLogView()
+                    case .debug:
+                        DebugSettingsView()
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

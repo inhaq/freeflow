@@ -105,6 +105,30 @@ extension View {
     }
 }
 
+/// Groups nearby glass surfaces so they blend/morph and share a single render
+/// pass. On macOS 26+ this is a real `GlassEffectContainer`; on macOS 13–25 it
+/// passes its content through unchanged (the material fallback needs no
+/// grouping).
+struct LiquidGlassGroup<Content: View>: View {
+    private let spacing: CGFloat?
+    private let content: Content
+
+    init(spacing: CGFloat? = nil, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing
+        self.content = content()
+    }
+
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) {
+                content
+            }
+        } else {
+            content
+        }
+    }
+}
+
 /// A modern, capsule-shaped tinted button style used for primary actions.
 struct LiquidProminentButtonStyle: ButtonStyle {
     var tint: Color = .accentColor
