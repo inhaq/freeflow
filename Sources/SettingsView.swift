@@ -1313,7 +1313,7 @@ struct GeneralSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            TextEditor(text: $customVocabularyInput)
+            ScrollForwardingTextEditor(text: $customVocabularyInput)
                 .font(.system(.body, design: .monospaced))
                 .frame(minHeight: 80, maxHeight: 140)
                 .overlay(
@@ -1528,7 +1528,7 @@ struct PromptsSettingsView: View {
                 .cornerRadius(6)
             }
 
-            TextEditor(text: $customSystemPromptInput)
+            ScrollForwardingTextEditor(text: $customSystemPromptInput)
                 .font(.system(.body, design: .monospaced))
                 .frame(minHeight: 120, maxHeight: 200)
                 .overlay(
@@ -1583,7 +1583,7 @@ struct PromptsSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                TextEditor(text: $systemTestInput)
+                ScrollForwardingTextEditor(text: $systemTestInput)
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 60, maxHeight: 100)
                     .overlay(
@@ -1770,7 +1770,7 @@ struct PromptsSettingsView: View {
                 .cornerRadius(6)
             }
 
-            TextEditor(text: $customContextPromptInput)
+            ScrollForwardingTextEditor(text: $customContextPromptInput)
                 .font(.system(.body, design: .monospaced))
                 .frame(minHeight: 120, maxHeight: 200)
                 .overlay(
@@ -2712,7 +2712,7 @@ struct VoiceMacroEditorView: View {
                 Text("Text (What gets pasted)")
                     .font(.caption.weight(.semibold))
                     .padding(.top, 8)
-                TextEditor(text: $payload)
+                ScrollForwardingTextEditor(text: $payload)
                     .font(.system(.body, design: .monospaced))
                     .frame(height: 150)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))

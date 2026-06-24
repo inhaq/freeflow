@@ -743,7 +743,7 @@ struct SetupView: View {
                 Text("Vocabulary")
                     .font(.headline)
 
-                TextEditor(text: $customVocabularyInput)
+                ScrollForwardingTextEditor(text: $customVocabularyInput)
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 130)
                     .overlay(
