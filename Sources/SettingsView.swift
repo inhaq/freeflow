@@ -1210,8 +1210,7 @@ struct GeneralSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            TextEditor(text: $customVocabularyInput)
-                .font(.system(.body, design: .monospaced))
+            ScrollForwardingTextEditor(text: $customVocabularyInput)
                 .frame(minHeight: 80, maxHeight: 140)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
@@ -1425,8 +1424,7 @@ struct PromptsSettingsView: View {
                 .cornerRadius(6)
             }
 
-            TextEditor(text: $customSystemPromptInput)
-                .font(.system(.body, design: .monospaced))
+            ScrollForwardingTextEditor(text: $customSystemPromptInput)
                 .frame(minHeight: 120, maxHeight: 200)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
@@ -1480,8 +1478,7 @@ struct PromptsSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                TextEditor(text: $systemTestInput)
-                    .font(.system(.body, design: .monospaced))
+                ScrollForwardingTextEditor(text: $systemTestInput)
                     .frame(minHeight: 60, maxHeight: 100)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
@@ -1667,8 +1664,7 @@ struct PromptsSettingsView: View {
                 .cornerRadius(6)
             }
 
-            TextEditor(text: $customContextPromptInput)
-                .font(.system(.body, design: .monospaced))
+            ScrollForwardingTextEditor(text: $customContextPromptInput)
                 .frame(minHeight: 120, maxHeight: 200)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
@@ -2609,8 +2605,7 @@ struct VoiceMacroEditorView: View {
                 Text("Text (What gets pasted)")
                     .font(.caption.weight(.semibold))
                     .padding(.top, 8)
-                TextEditor(text: $payload)
-                    .font(.system(.body, design: .monospaced))
+                ScrollForwardingTextEditor(text: $payload)
                     .frame(height: 150)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
             }
