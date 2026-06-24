@@ -58,6 +58,11 @@ final class DataURLImageLoader: ObservableObject {
             return
         }
 
+        // Switching to a different, not-yet-decoded image: clear the stale one so
+        // the placeholder shows instead of briefly rendering the previous screenshot.
+        image = nil
+        loadedKey = nil
+
         let decoded = await Task.detached(priority: .userInitiated) {
             imageFromDataURL(dataURL)
         }.value

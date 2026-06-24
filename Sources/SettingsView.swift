@@ -183,6 +183,7 @@ struct ProviderSettingsFields: View {
                         Text(option.label).tag(option.value)
                     }
                 }
+                .accessibilityLabel("Post-Processing Reasoning")
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .frame(maxWidth: 360, alignment: .leading)

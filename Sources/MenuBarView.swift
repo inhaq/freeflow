@@ -424,6 +424,7 @@ struct MenuBarView: View {
                 } label: {
                     Text(appState.holdShortcut == savedCustomShortcut ? "✓ Custom: \(savedCustomShortcut.displayName)" : "  Custom: \(savedCustomShortcut.displayName)")
                 }
+                .disabled(savedCustomShortcut == appState.toggleShortcut)
             }
 
             Divider()
@@ -460,6 +461,7 @@ struct MenuBarView: View {
                 } label: {
                     Text(appState.toggleShortcut == savedCustomShortcut ? "✓ Custom: \(savedCustomShortcut.displayName)" : "  Custom: \(savedCustomShortcut.displayName)")
                 }
+                .disabled(savedCustomShortcut == appState.holdShortcut)
             }
 
             Divider()
@@ -496,6 +498,7 @@ struct MenuBarView: View {
                 } label: {
                     Text(appState.copyAgainShortcut == savedCustomShortcut ? "✓ Custom: \(savedCustomShortcut.displayName)" : "  Custom: \(savedCustomShortcut.displayName)")
                 }
+                .disabled(savedCustomShortcut == appState.holdShortcut || savedCustomShortcut == appState.toggleShortcut)
             }
 
             Divider()
