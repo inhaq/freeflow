@@ -242,6 +242,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let pasteAfterShortcutReleaseDelay: TimeInterval = 0.03
     private let pressEnterAfterPasteDelay: TimeInterval = 0.08
     private let clipboardRestoreDelay: TimeInterval = 1.0
+    private let fastDictationContextGraceNanoseconds: UInt64 = 150_000_000
     let maxPipelineHistoryCount = 20
     static let defaultContextScreenshotMaxDimension = Int(AppContextService.defaultScreenshotMaxDimension)
     static let contextScreenshotDimensionOptions = [1024, 768, 640, 512]
@@ -1235,6 +1236,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    static func saveAudioFileAsync(from tempURL: URL) -> Task<SavedAudioFile?, Never> {
+        Task.detached(priority: .utility) {
+            saveAudioFile(from: tempURL)
+        }
+    }
+
     private static func deleteAudioFile(_ fileName: String) {
         let fileURL = audioStorageDirectory().appendingPathComponent(fileName)
         try? FileManager.default.removeItem(at: fileURL)
@@ -1292,14 +1299,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
             screenshotError: nil
         )
 
-        let postProcessingService = PostProcessingService(
-            apiKey: apiKey,
-            baseURL: apiBaseURL,
-            preferredModel: postProcessingModel,
-            preferredFallbackModel: postProcessingFallbackModel,
-            instructionExecutionGuardEnabled: instructionExecutionGuardEnabled,
-            reasoningEffortOverride: postProcessingReasoningEffortOverride
-        )
+            let postProcessingService = PostProcessingService(
+                apiKey: apiKey,
+                baseURL: apiBaseURL,
+                preferredModel: postProcessingModel,
+                preferredFallbackModel: postProcessingFallbackModel,
+                instructionExecutionGuardEnabled: instructionExecutionGuardEnabled,
+                reasoningEffortOverride: postProcessingReasoningEffortOverride
+            )
         let capturedCustomVocabulary = customVocabulary
         let capturedCustomSystemPrompt = customSystemPrompt
 
@@ -1995,10 +2002,15 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     private func scheduleShortcutStart(mode: RecordingTriggerMode) {
         cancelPendingShortcutStart(resetMode: false)
-        pendingSelectionSnapshot = contextService.collectSelectionSnapshot()
-        pendingManualCommandInvocation = hotkeyManager.currentPressedModifiers.contains(
+        let manualCommandInvocation = hotkeyManager.currentPressedModifiers.contains(
             commandModeManualModifier.shortcutModifier
         )
+        pendingManualCommandInvocation = manualCommandInvocation
+        pendingSelectionSnapshot = shouldCollectSelectionSnapshotBeforeRecording(
+            manualCommandRequested: manualCommandInvocation
+        )
+            ? contextService.collectSelectionSnapshot()
+            : nil
         pendingShortcutStartMode = mode
         let delay = shortcutStartDelay
 
@@ -2021,6 +2033,16 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 self.pendingShortcutStartMode = nil
                 self.startRecording(triggerMode: pendingMode)
             }
+        }
+    }
+
+    private func shouldCollectSelectionSnapshotBeforeRecording(manualCommandRequested: Bool) -> Bool {
+        guard isCommandModeEnabled else { return false }
+        switch commandModeStyle {
+        case .automatic:
+            return true
+        case .manual:
+            return manualCommandRequested
         }
     }
 
@@ -2152,22 +2174,26 @@ final class AppState: ObservableObject, @unchecked Sendable {
             os_log(.info, log: recordingLog, "accessibility check passed: %.3fms", (CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
         }
 
-        let selectionSnapshot = selectionSnapshot ?? contextService.collectSelectionSnapshot()
-        let manualCommandRequested = manualCommandRequested
-            ?? hotkeyManager.currentPressedModifiers.contains(commandModeManualModifier.shortcutModifier)
-        guard let resolvedIntent = resolveSessionIntent(
-            triggerMode: triggerMode,
-            selectionSnapshot: selectionSnapshot,
-            manualCommandRequested: manualCommandRequested
-        ) else { return false }
+        let resolvedIntent: SessionIntent
+        if isCommandModeEnabled {
+            let manualCommandRequested = manualCommandRequested
+                ?? hotkeyManager.currentPressedModifiers.contains(commandModeManualModifier.shortcutModifier)
+            let selectionSnapshot = selectionSnapshot ?? contextService.collectSelectionSnapshot()
+            guard let intent = resolveSessionIntent(
+                triggerMode: triggerMode,
+                selectionSnapshot: selectionSnapshot,
+                manualCommandRequested: manualCommandRequested
+            ) else { return false }
+            resolvedIntent = intent
+        } else {
+            resolvedIntent = .dictation
+        }
 
         if resolvedIntent.isCommandMode {
             guard ensureScreenCaptureAccess() else { return false }
             if let startedAt {
                 os_log(.info, log: recordingLog, "screen capture check passed: %.3fms", (CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
             }
-        } else {
-            hasScreenRecordingPermission = hasScreenCapturePermission()
         }
 
         currentSessionIntent = resolvedIntent
@@ -2341,23 +2367,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
         statusText = "Starting..."
         hasShownScreenshotPermissionAlert = false
 
-        // Show initializing dots only if engine takes longer than 0.2s to start
-        var overlayShown = false
+        // Show feedback immediately on trigger. The recorder still transitions
+        // to the live waveform on first non-silent audio, but the UI should
+        // acknowledge the press without waiting for AVCapture startup.
         cancelRecordingInitializationTimer()
-        let initTimer = DispatchSource.makeTimerSource(queue: .main)
-        recordingInitializationTimer = initTimer
-        initTimer.schedule(deadline: .now() + 0.2)
-        initTimer.setEventHandler { [weak self] in
-            guard let self, !overlayShown else { return }
-            overlayShown = true
-            os_log(.info, log: recordingLog, "engine slow — showing initializing overlay")
-            self.clearPendingOverlayDismissToken()
-            self.overlayManager.showInitializing(
-                mode: self.activeRecordingTriggerMode ?? triggerMode,
-                isCommandMode: self.currentSessionIntent.isCommandMode
-            )
-        }
-        initTimer.resume()
+        overlayManager.showInitializing(
+            mode: activeRecordingTriggerMode ?? triggerMode,
+            isCommandMode: currentSessionIntent.isCommandMode
+        )
 
         // Transition to waveform when first real audio arrives (any non-zero RMS)
         let deviceUID = selectedMicrophoneID
@@ -2369,18 +2386,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 self.markDictationSignpost("recorder ready")
                 self.statusText = "Recording..."
                 self.clearPendingOverlayDismissToken()
-                if overlayShown {
-                    self.overlayManager.transitionToRecording(
-                        mode: self.activeRecordingTriggerMode ?? triggerMode,
-                        isCommandMode: self.currentSessionIntent.isCommandMode
-                    )
-                } else {
-                    self.overlayManager.showRecording(
-                        mode: self.activeRecordingTriggerMode ?? triggerMode,
-                        isCommandMode: self.currentSessionIntent.isCommandMode
-                    )
-                }
-                overlayShown = true
+                self.overlayManager.transitionToRecording(
+                    mode: self.activeRecordingTriggerMode ?? triggerMode,
+                    isCommandMode: self.currentSessionIntent.isCommandMode
+                )
                 self.playAlertSound(named: "Tink")
             }
         }
@@ -2796,9 +2805,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 return
             }
 
-            let savedAudioFile = Self.saveAudioFile(from: fileURL)
-            let transcriptionFileURL = savedAudioFile?.fileURL ?? fileURL
-            self.transcribingAudioFileName = savedAudioFile?.fileName
+            let transcriptionFileURL = fileURL
             self.markDictationSignpost("audio finalized")
             self.statusText = "Transcribing..."
             self.debugStatusMessage = "Transcribing audio"
@@ -2817,10 +2824,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
             self.audioRecorder.onPCM16Samples = nil
             self.transcriptionTask?.cancel()
             guard self.isTranscribing else {
-                if let savedAudioFile {
-                    Self.deleteAudioFile(savedAudioFile.fileName)
-                }
-                self.transcribingAudioFileName = nil
                 activeRealtime?.cancel()
                 self.audioRecorder.cleanup()
                 self.endCriticalDictationActivity()
@@ -2854,14 +2857,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
                             self?.lastTranscript = bootstrapTranscript
                         }
                     }
-                    let appContext: AppContext
-                    if let sessionContext {
-                        appContext = sessionContext
-                    } else if let inFlightContext = await inFlightContextTask?.value {
-                        appContext = inFlightContext
-                    } else {
-                        appContext = self.fallbackContextAtStop()
-                    }
+                    let appContext = await self.processingContext(
+                        sessionContext: sessionContext,
+                        inFlightContextTask: inFlightContextTask,
+                        sessionIntent: sessionIntent
+                    )
                     try Task.checkCancellation()
                     await MainActor.run { [weak self] in
                         self?.markDictationSignpost("transcript received")
@@ -2878,8 +2878,17 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     )
                     try Task.checkCancellation()
 
-                    await MainActor.run {
-                        guard self.isTranscribing else { return }
+                    let trimmedRawTranscript = parsedTranscript.transcript
+                    let trimmedFinalTranscript = result.finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let processingStatus = Self.statusMessage(
+                        for: result.outcome,
+                        parsedTranscript: parsedTranscript
+                    )
+                    let systemPrompt = Self.resolvedSystemPrompt(self.customSystemPrompt)
+                    let debugStatus = self.debugStatusMessage
+
+                    let delivered = await MainActor.run {
+                        guard self.isTranscribing else { return false }
                         self.lastContextSummary = appContext.contextSummary
                         self.lastContextScreenshotDataURL = appContext.screenshotDataURL
                         self.lastContextScreenshotStatus = appContext.screenshotError
@@ -2889,26 +2898,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         self.lastContextWindowTitle = appContext.windowTitle ?? ""
                         self.lastContextSelectedText = appContext.selectedText ?? ""
                         self.lastContextLLMPrompt = appContext.contextPrompt ?? ""
-                        let trimmedRawTranscript = parsedTranscript.transcript
-                        let trimmedFinalTranscript = result.finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let processingStatus = Self.statusMessage(
-                            for: result.outcome,
-                            parsedTranscript: parsedTranscript
-                        )
                         self.lastPostProcessingPrompt = result.prompt
                         self.lastRawTranscript = trimmedRawTranscript
                         self.lastPostProcessedTranscript = trimmedFinalTranscript
                         self.lastPostProcessingStatus = processingStatus
-                        self.recordPipelineHistoryEntry(
-                            rawTranscript: trimmedRawTranscript,
-                            postProcessedTranscript: trimmedFinalTranscript,
-                            postProcessingPrompt: result.prompt,
-                            systemPrompt: Self.resolvedSystemPrompt(self.customSystemPrompt),
-                            context: appContext,
-                            processingStatus: processingStatus,
-                            intent: sessionIntent,
-                            audioFileName: savedAudioFile?.fileName
-                        )
                         self.transcriptionTask = nil
                         self.transcribingAudioFileName = nil
                         self.lastTranscript = trimmedFinalTranscript
@@ -2961,10 +2954,29 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         }
 
                         self.endDictationSignpost("delivered")
-                        self.audioRecorder.cleanup()
-                        self.refreshAvailableMicrophonesIfNeeded()
 
                         self.scheduleReadyStatusReset(after: 3, matching: [completionStatusText, "Nothing to transcribe", enterOnlyStatusText])
+                        return true
+                    }
+
+                    guard delivered else {
+                        return
+                    }
+                    let savedAudioFile = await Self.saveAudioFileAsync(from: fileURL).value
+                    await MainActor.run {
+                        self.recordPipelineHistoryEntry(
+                            rawTranscript: trimmedRawTranscript,
+                            postProcessedTranscript: trimmedFinalTranscript,
+                            postProcessingPrompt: result.prompt,
+                            systemPrompt: systemPrompt,
+                            context: appContext,
+                            processingStatus: processingStatus,
+                            debugStatus: debugStatus,
+                            intent: sessionIntent,
+                            audioFileName: savedAudioFile?.fileName
+                        )
+                        self.audioRecorder.cleanup()
+                        self.refreshAvailableMicrophonesIfNeeded()
                     }
                 } catch is CancellationError {
                     await MainActor.run {
@@ -2973,16 +2985,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         self.endCriticalDictationActivity()
                     }
                 } catch {
-                    let resolvedContext: AppContext
-                    if let sessionContext {
-                        resolvedContext = sessionContext
-                    } else if let inFlightContext = await inFlightContextTask?.value {
-                        resolvedContext = inFlightContext
-                    } else {
-                        resolvedContext = self.fallbackContextAtStop()
-                    }
-                    await MainActor.run {
-                        guard self.isTranscribing else { return }
+                    let resolvedContext = await self.processingContext(
+                        sessionContext: sessionContext,
+                        inFlightContextTask: inFlightContextTask,
+                        sessionIntent: sessionIntent
+                    )
+                    let savedAudioFile = await Self.saveAudioFileAsync(from: fileURL).value
+                    let recordedError = await MainActor.run {
+                        guard self.isTranscribing else { return false }
                         self.transcriptionTask = nil
                         self.transcribingAudioFileName = nil
                         let userFacingErrorMessage = self.formattedTranscriptionError(error)
@@ -3012,6 +3022,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         )
                         self.audioRecorder.cleanup()
                         self.refreshAvailableMicrophonesIfNeeded()
+                        return true
+                    }
+                    if !recordedError, let savedAudioFile {
+                        Self.deleteAudioFile(savedAudioFile.fileName)
                     }
                 }
             }
@@ -3031,6 +3045,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         systemPrompt: String,
         context: AppContext,
         processingStatus: String,
+        debugStatus: String? = nil,
         intent: SessionIntent,
         audioFileName: String? = nil
     ) {
@@ -3050,7 +3065,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             contextScreenshotStatus: context.screenshotError
                 ?? "available (\(context.screenshotMimeType ?? "image"))",
             postProcessingStatus: processingStatus,
-            debugStatus: debugStatusMessage,
+            debugStatus: debugStatus ?? debugStatusMessage,
             customVocabulary: customVocabulary,
             audioFileName: audioFileName,
             contextAppName: context.appName,
@@ -3169,6 +3184,43 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 self.handleScreenshotCaptureIssue(context.screenshotError)
             }
             return context
+        }
+    }
+
+    private func processingContext(
+        sessionContext: AppContext?,
+        inFlightContextTask: Task<AppContext?, Never>?,
+        sessionIntent: SessionIntent
+    ) async -> AppContext {
+        if let sessionContext {
+            return sessionContext
+        }
+
+        guard let inFlightContextTask else {
+            return fallbackContextAtStop()
+        }
+
+        if sessionIntent.isCommandMode {
+            return await inFlightContextTask.value ?? fallbackContextAtStop()
+        }
+
+        return await withTaskGroup(of: AppContext?.self) { group in
+            group.addTask {
+                await inFlightContextTask.value
+            }
+            group.addTask { [fastDictationContextGraceNanoseconds] in
+                try? await Task.sleep(nanoseconds: fastDictationContextGraceNanoseconds)
+                return nil
+            }
+
+            let firstResult = await group.next() ?? nil
+            group.cancelAll()
+            if let firstResult {
+                return firstResult
+            }
+
+            inFlightContextTask.cancel()
+            return fallbackContextAtStop()
         }
     }
 
